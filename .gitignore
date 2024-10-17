@@ -1,2 +1,3 @@
 *.pem
 *.db
+__pycache__/
