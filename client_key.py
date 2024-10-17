@@ -2,13 +2,11 @@ import socket
 import json
 import os
 import sys
-from cryptography.hazmat.primitives import serialization
-# Import other necessary cryptographic modules as needed
-# from cryptography.hazmat.primitives import hashes, padding as asym_padding
-# from cryptography.hazmat.primitives.asymmetric import rsa
-# from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-# from cryptography.exceptions import InvalidSignature
-# from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.primitives.asymmetric import rsa, padding as asym_padding
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.backends import default_backend
 
 
 class Client:
@@ -25,23 +23,32 @@ class Client:
     def generate_keys(self):
         """Generate RSA public and private keys."""
         print("[Client] Generating RSA keys...")
-        # TODO: Generate a 2048-bit RSA key pair and assign to self.private_key
-        # Set self.public_key to the public key part of the key pair
+        self.private_key = rsa.generate_private_key(
+            public_exponent=65537, key_size=2048, backend=default_backend()
+        )
+        self.public_key = self.private_key.public_key()
         print("[Client] Keys generated.")
 
     def load_keys(self, private_key_path):
         """Load private key from a file."""
         print(f"[Client] Loading private key from '{private_key_path}'...")
         with open(private_key_path, "rb") as key_file:
-            # TODO: Load the private key from the file and assign to self.private_key
-            # Set self.public_key to the public key part of the key pair
-            pass
+            self.private_key = serialization.load_pem_private_key(
+                key_file.read(), password=None, backend=default_backend()
+            )
+        self.public_key = self.private_key.public_key()
         print("[Client] Private key loaded.")
 
     def save_private_key(self, private_key_path):
         """Save the private key to a file."""
         print(f"[Client] Saving private key to '{private_key_path}'...")
-        # TODO: Serialize the private key and save it to the specified file
+        pem = self.private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+        with open(private_key_path, "wb") as key_file:
+            key_file.write(pem)
         print("[Client] Private key saved.")
 
     def connect_to_server(self):
@@ -62,8 +69,10 @@ class Client:
     def register(self):
         """Register the client with the server by sending the public key."""
         print("[Client] Registering with the server...")
-        # TODO: Serialize the public key to PEM format and decode to a string
-        public_key_pem = None  # Replace with actual serialized public key string
+        public_key_pem = self.public_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        ).decode()
         data = {
             "command": "register",
             "username": self.username,
@@ -79,22 +88,39 @@ class Client:
         # Get recipient's public key
         recipient_public_key_pem = self.get_public_key(recipient_username)
         recipient_public_key = serialization.load_pem_public_key(
-            recipient_public_key_pem.encode(),
-            # backend=default_backend()
+            recipient_public_key_pem.encode(), backend=default_backend()
         )
 
-        # TODO: Generate a random symmetric key (AES-256) and IV (16 bytes)
-        symmetric_key = None  # Students implement this
-        iv = None  # Students implement this
+        # Generate symmetric key and IV
+        symmetric_key = os.urandom(32)  # AES-256 key
+        iv = os.urandom(16)  # AES block size for CFB mode
 
-        # TODO: Encrypt the plaintext_message using AES encryption with the symmetric key and IV
-        ciphertext = None  # Students implement this
+        # Encrypt the message with symmetric key
+        cipher = Cipher(
+            algorithms.AES(symmetric_key), modes.CFB(iv), backend=default_backend()
+        )
+        encryptor = cipher.encryptor()
+        ciphertext = encryptor.update(plaintext_message.encode()) + encryptor.finalize()
 
-        # TODO: Encrypt the symmetric key using the recipient's public RSA key
-        encrypted_symmetric_key = None  # Students implement this
+        # Encrypt the symmetric key with recipient's public key
+        encrypted_symmetric_key = recipient_public_key.encrypt(
+            symmetric_key,
+            asym_padding.OAEP(
+                mgf=asym_padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None,
+            ),
+        )
 
-        # TODO: Sign the ciphertext using your private RSA key
-        signature = None  # Students implement this
+        # Sign the ciphertext with sender's private key
+        signature = self.private_key.sign(
+            ciphertext,
+            asym_padding.PSS(
+                mgf=asym_padding.MGF1(hashes.SHA256()),
+                salt_length=asym_padding.PSS.MAX_LENGTH,
+            ),
+            hashes.SHA256(),
+        )
 
         # Package the message
         message_package = {
@@ -102,12 +128,10 @@ class Client:
             "from": self.username,
             "to": recipient_username,
             "message": {
-                "encrypted_symmetric_key": encrypted_symmetric_key.hex()
-                if encrypted_symmetric_key
-                else "",
-                "iv": iv.hex() if iv else "",
-                "ciphertext": ciphertext.hex() if ciphertext else "",
-                "signature": signature.hex() if signature else "",
+                "encrypted_symmetric_key": encrypted_symmetric_key.hex(),
+                "iv": iv.hex(),
+                "ciphertext": ciphertext.hex(),
+                "signature": signature.hex(),
             },
         }
 
@@ -162,41 +186,53 @@ class Client:
         sender_username = message["from"]
         sender_public_key_pem = self.get_public_key(sender_username)
         sender_public_key = serialization.load_pem_public_key(
-            sender_public_key_pem.encode(),
-            # backend=default_backend()
+            sender_public_key_pem.encode(), backend=default_backend()
         )
 
         message_content = message["message"]
-        encrypted_symmetric_key_hex = message_content.get("encrypted_symmetric_key")
-        iv_hex = message_content.get("iv")
-        ciphertext_hex = message_content.get("ciphertext")
-        signature_hex = message_content.get("signature")
+        encrypted_symmetric_key = bytes.fromhex(
+            message_content["encrypted_symmetric_key"]
+        )
+        iv = bytes.fromhex(message_content["iv"])
+        ciphertext = bytes.fromhex(message_content["ciphertext"])
+        signature = bytes.fromhex(message_content["signature"])
 
-        if not all(
-            [encrypted_symmetric_key_hex, iv_hex, ciphertext_hex, signature_hex]
-        ):
-            print("[Client] Incomplete message data.")
+        # Decrypt the symmetric key with recipient's private key
+        try:
+            symmetric_key = self.private_key.decrypt(
+                encrypted_symmetric_key,
+                asym_padding.OAEP(
+                    mgf=asym_padding.MGF1(algorithm=hashes.SHA256()),
+                    algorithm=hashes.SHA256(),
+                    label=None,
+                ),
+            )
+        except Exception as e:
+            print(f"[Client] Failed to decrypt symmetric key: {e}")
             return
 
-        encrypted_symmetric_key = bytes.fromhex(encrypted_symmetric_key_hex)
-        iv = bytes.fromhex(iv_hex)
-        ciphertext = bytes.fromhex(ciphertext_hex)
-        signature = bytes.fromhex(signature_hex)
+        # Decrypt the message with symmetric key
+        cipher = Cipher(
+            algorithms.AES(symmetric_key), modes.CFB(iv), backend=default_backend()
+        )
+        decryptor = cipher.decryptor()
+        plaintext = decryptor.update(ciphertext) + decryptor.finalize()
 
-        # TODO: Decrypt the symmetric key using your private RSA key
-        symmetric_key = None  # Students implement this
-
-        # TODO: Decrypt the ciphertext using AES decryption with the symmetric key and IV
-        plaintext = None  # Students implement this
-
-        # TODO: Verify the signature using the sender's public RSA key
-        signature_valid = False  # Students implement this
-
-        if signature_valid:
+        # Verify the signature
+        try:
+            sender_public_key.verify(
+                signature,
+                ciphertext,
+                asym_padding.PSS(
+                    mgf=asym_padding.MGF1(hashes.SHA256()),
+                    salt_length=asym_padding.PSS.MAX_LENGTH,
+                ),
+                hashes.SHA256(),
+            )
             print(
                 f"[Client] Signature verified. Message from '{sender_username}': {plaintext.decode()}"
             )
-        else:
+        except InvalidSignature:
             print("[Client] Invalid signature. Message may have been tampered with.")
 
     def send_data(self, data):
