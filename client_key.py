@@ -232,6 +232,7 @@ class Client:
             print(
                 f"[Client] Signature verified. Message from '{sender_username}': {plaintext.decode()}"
             )
+            return plaintext.decode()
         except InvalidSignature:
             print("[Client] Invalid signature. Message may have been tampered with.")
 
