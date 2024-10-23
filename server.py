@@ -140,12 +140,17 @@ class Server:
         """Retrieve all messages."""
         with self.lock:
             self.cursor.execute(
-                "SELECT sender, recipient, message_content FROM messages"
+                "SELECT id, sender, recipient, message_content FROM messages"
             )
             messages = self.cursor.fetchall()
             # Convert to list of dictionaries
             messages_list = [
-                {"from": row[0], "to": row[1], "message": json.loads(row[2])}
+                {
+                    "message_id": row[0],
+                    "from": row[1],
+                    "to": row[2],
+                    "message": json.loads(row[3]),
+                }
                 for row in messages
             ]
             return messages_list

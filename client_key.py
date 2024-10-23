@@ -2,6 +2,7 @@ import socket
 import json
 import os
 import sys
+import datetime  # Added for timestamp handling
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import rsa, padding as asym_padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -19,6 +20,8 @@ class Client:
         self.server_socket = None
         self.contacts = {}
         self.messages = []
+        self.conversations = {}  # Store conversations with contacts
+        self.processed_message_ids = set()
 
     def generate_keys(self):
         """Generate RSA public and private keys."""
@@ -122,6 +125,9 @@ class Client:
             hashes.SHA256(),
         )
 
+        # Add DateTime to the message
+        timestamp = datetime.datetime.now().isoformat()
+
         # Package the message
         message_package = {
             "command": "send_message",
@@ -132,8 +138,14 @@ class Client:
                 "iv": iv.hex(),
                 "ciphertext": ciphertext.hex(),
                 "signature": signature.hex(),
+                "timestamp": timestamp,
             },
         }
+
+        # Store the sent message persistently
+        self.store_message(
+            recipient_username, self.username, plaintext_message, timestamp
+        )
 
         # Send the message to the server
         self.send_data(message_package)
@@ -175,8 +187,16 @@ class Client:
             messages = response["messages"]
             print(f"[Client] Received {len(messages)} messages.")
             for message in messages:
+                message_id = message.get("message_id")
+                if message_id in self.processed_message_ids:
+                    print(
+                        f"[Client] Skipping already processed message ID {message_id}"
+                    )
+                    continue  # Skip already processed messages
                 if message["to"] == self.username:
-                    self.process_message(message)
+                    plaintext = self.process_message(message)
+                    if plaintext:
+                        self.processed_message_ids.add(message_id)
         else:
             print(f"[Client] Error retrieving messages: {response['message']}")
 
@@ -196,6 +216,9 @@ class Client:
         iv = bytes.fromhex(message_content["iv"])
         ciphertext = bytes.fromhex(message_content["ciphertext"])
         signature = bytes.fromhex(message_content["signature"])
+        timestamp = message_content.get(
+            "timestamp", datetime.datetime.now().isoformat()
+        )
 
         # Decrypt the symmetric key with recipient's private key
         try:
@@ -229,12 +252,60 @@ class Client:
                 ),
                 hashes.SHA256(),
             )
+            plaintext_message = plaintext.decode()
             print(
-                f"[Client] Signature verified. Message from '{sender_username}': {plaintext.decode()}"
+                f"[Client] Signature verified. Message from '{sender_username}': {plaintext_message}"
             )
-            return plaintext.decode()
+
+            # Store the received message persistently
+            self.store_message(
+                sender_username, sender_username, plaintext_message, timestamp
+            )
+
+            return plaintext_message
         except InvalidSignature:
             print("[Client] Invalid signature. Message may have been tampered with.")
+            return None
+
+    def store_message(self, contact_username, sender, message, timestamp):
+        """Store messages persistently for each conversation."""
+        if contact_username not in self.conversations:
+            self.conversations[contact_username] = []
+        # Check if the message already exists
+        for msg in self.conversations[contact_username]:
+            if (
+                msg["sender"] == sender
+                and msg["message"] == message
+                and msg["timestamp"] == timestamp
+            ):
+                # Message already exists, do not add it again
+                return
+        # Add the new message
+        self.conversations[contact_username].append(
+            {"sender": sender, "message": message, "timestamp": timestamp}
+        )
+        # Save the conversation to a JSON file
+        self.save_conversation(contact_username)
+
+    def load_conversations(self):
+        """Load all conversations from files."""
+        if not os.path.exists("conversations"):
+            return
+        for filename in os.listdir("conversations"):
+            if filename.startswith(f"{self.username}_") and filename.endswith(".json"):
+                contact_username = filename[len(self.username) + 1 : -5]
+                with open(os.path.join("conversations", filename), "r") as f:
+                    self.conversations[contact_username] = json.load(f)
+
+    def save_conversation(self, contact_username):
+        """Save a conversation to a JSON file."""
+        if not os.path.exists("conversations"):
+            os.makedirs("conversations")
+        filename = os.path.join(
+            "conversations", f"{self.username}_{contact_username}.json"
+        )
+        with open(filename, "w") as f:
+            json.dump(self.conversations[contact_username], f)
 
     def send_data(self, data):
         """Send JSON data to the server."""
@@ -253,57 +324,10 @@ class Client:
             self.connect_to_server()
             self.register()
             self.request_contacts()
-            self.cli_loop()
+            # Load existing conversations
+            self.load_conversations()
+            # The GUI will handle user interactions
         except Exception as e:
             print(f"[Client] Error: {e}")
-        finally:
             self.disconnect_from_server()
-
-    def cli_loop(self):
-        """Command-line interface loop."""
-        while True:
-            print("\nAvailable commands:")
-            print("1. Send message")
-            print("2. Retrieve messages")
-            print("3. View contacts")
-            print("4. Exit")
-            choice = input("Enter your choice: ").strip()
-            if choice == "1":
-                recipient = input("Enter recipient's username: ").strip()
-                message = input("Enter your message: ").strip()
-                self.send_message(recipient, message)
-            elif choice == "2":
-                self.retrieve_messages()
-            elif choice == "3":
-                self.display_contacts()
-            elif choice == "4":
-                print("[Client] Exiting.")
-                break
-            else:
-                print("[Client] Invalid choice. Please try again.")
-
-    def display_contacts(self):
-        """Display the list of contacts."""
-        print("\n[Client] Contacts:")
-        for username in self.contacts.keys():
-            print(f"- {username}")
-
-
-if __name__ == "__main__":
-    # Check if username is provided
-    if len(sys.argv) < 2:
-        print("Usage: python client.py <username>")
-        sys.exit(1)
-
-    username = sys.argv[1]
-    client = Client(username=username)
-    private_key_file = f"{username}_private_key.pem"
-
-    # Check if private key exists
-    if os.path.exists(private_key_file):
-        client.load_keys(private_key_file)
-    else:
-        client.generate_keys()
-        client.save_private_key(private_key_file)
-
-    client.run()
+            raise e

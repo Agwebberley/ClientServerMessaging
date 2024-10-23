@@ -1,0 +1,136 @@
+#:kivy 1.10.0
+
+<LoginScreen>:
+    username_input: username_input
+    server_address_input: server_address_input
+    server_port_input: server_port_input
+    error_label: error_label
+
+    BoxLayout:
+        orientation: 'vertical'
+        padding: 20
+        spacing: 10
+
+        Label:
+            text: 'Enter your username:'
+            size_hint_y: None
+            height: 30
+            font_size: '18sp'
+        TextInput:
+            id: username_input
+            multiline: False
+            size_hint_y: None
+            height: 40
+            font_size: '18sp'
+
+        Label:
+            text: 'Server Address (default: localhost):'
+            size_hint_y: None
+            height: 30
+            font_size: '18sp'
+        TextInput:
+            id: server_address_input
+            text: 'localhost'
+            multiline: False
+            size_hint_y: None
+            height: 40
+            font_size: '18sp'
+
+        Label:
+            text: 'Server Port (default: 12345):'
+            size_hint_y: None
+            height: 30
+            font_size: '18sp'
+        TextInput:
+            id: server_port_input
+            text: '12345'
+            multiline: False
+            size_hint_y: None
+            height: 40
+            font_size: '18sp'
+
+        Label:
+            id: error_label
+            text: ''
+            color: 1, 0, 0, 1
+            size_hint_y: None
+            height: 30
+            font_size: '16sp'
+
+        Button:
+            text: 'Login'
+            size_hint_y: None
+            height: 50
+            font_size: '18sp'
+            on_press: root.login()
+
+<ChatScreen>:
+    BoxLayout:
+        orientation: 'horizontal'
+        spacing: 5
+
+        # Sidebar with contacts
+        BoxLayout:
+            orientation: 'vertical'
+            size_hint_x: 0.3
+            padding: 5
+            spacing: 5
+            # Adjust the background color as needed
+            canvas.before:
+                Color:
+                    rgba: 0.2, 0.2, 0.2, 1  # Dark gray color
+                Rectangle:
+                    pos: self.pos
+                    size: self.size
+            Label:
+                text: 'Contacts'
+                size_hint_y: None
+                height: 40
+                font_size: '20sp'
+            ScrollView:
+                do_scroll_x: False
+                GridLayout:
+                    id: contacts_layout
+                    cols: 1
+                    size_hint_y: None
+                    height: self.minimum_height
+
+        # Main area with messages
+        BoxLayout:
+            orientation: 'vertical'
+            padding: 5
+            spacing: 5
+
+            BoxLayout:
+                size_hint_y: None
+                height: 40
+                Label:
+                    id: chat_with_label
+                    text: 'Select a contact to start chatting'
+                    font_size: '18sp'
+
+            ScrollView:
+                id: messages_scroll
+                do_scroll_x: False
+                GridLayout:
+                    id: messages_layout
+                    cols: 1
+                    size_hint_y: None
+                    height: self.minimum_height
+
+            # Bottom area to send messages
+            BoxLayout:
+                size_hint_y: None
+                height: 50
+                spacing: 5
+                TextInput:
+                    id: message_input
+                    multiline: False
+                    font_size: '18sp'
+                    hint_text: 'Type your message...'
+                    on_text_validate: root.send_message()
+                Button:
+                    text: 'Send'
+                    size_hint_x: None
+                    width: 80
+                    on_press: root.send_message()
